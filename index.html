@@ -1,0 +1,434 @@
+<!DOCTYPE html>
+<html lang="uk">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<title>Суфлер</title>
+<style>
+  :root {
+    --bg: #f5f5f1;
+    --panel: #ffffff;
+    --border: #d9d9d2;
+    --text: #16181c;
+    --dim: #70747c;
+    --accent: #2563eb;
+    --highlight: #ffe36b;
+  }
+  * { margin: 0; padding: 0; box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+  html, body { height: 100%; background: var(--bg); color: var(--text);
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; }
+
+  .screen { display: none; height: 100%; }
+  .screen.active { display: flex; flex-direction: column; }
+
+  /* ---------- Editor ---------- */
+  #editor { padding: 20px; gap: 14px; max-width: 900px; margin: 0 auto; width: 100%; }
+  #editor h1 { font-size: 22px; font-weight: 700; }
+  #editor h1 span { color: var(--dim); font-size: 14px; font-weight: 400; margin-left: 8px; }
+  #script {
+    flex: 1; width: 100%; background: var(--panel); color: var(--text);
+    border: 1px solid var(--border); border-radius: 12px; padding: 16px;
+    font-size: 17px; line-height: 1.6; resize: none; outline: none;
+    font-family: inherit; display: block;
+  }
+  #script:focus { border-color: var(--accent); }
+  .row { display: flex; gap: 10px; flex-wrap: wrap; align-items: center; }
+  .ctrl { background: var(--panel); border: 1px solid var(--border); border-radius: 10px;
+    padding: 10px 12px; display: flex; align-items: center; gap: 8px; font-size: 14px; color: var(--dim); }
+  .ctrl input[type=range] { width: 110px; accent-color: var(--accent); }
+  .ctrl output { color: var(--text); min-width: 34px; text-align: right; }
+  button { font: inherit; cursor: pointer; border: none; border-radius: 10px; }
+  .btn-mode { padding: 10px 14px; background: var(--panel); color: var(--dim); border: 1px solid var(--border); font-size: 14px; }
+  .btn-mode.sel { background: #e3ecff; color: var(--accent); border-color: var(--accent); font-weight: 600; }
+  #startBtn { padding: 14px 28px; background: var(--accent); color: #fff; font-size: 17px; font-weight: 600; margin-left: auto; }
+  #startBtn:disabled { opacity: .5; cursor: default; }
+  #status { font-size: 13px; color: var(--dim); min-height: 18px; }
+  #status.err { color: #ff7b72; }
+
+  /* ---------- Prompter ---------- */
+  #prompter { background: var(--bg); position: relative; overflow: hidden; }
+  #scroller { flex: 1; overflow: hidden; position: relative; }
+  #content {
+    position: absolute; left: 50%; transform: translateX(-50%);
+    padding: 45vh 24px 70vh; will-change: top; top: 0;
+    text-align: left; font-weight: 600;
+  }
+  #content .w { color: #a8aaa4; transition: color .25s, background .25s; border-radius: 6px; }
+  #content .w.done { color: #d3d3cc; }
+  #content .w.cur { color: #000; background: var(--highlight); }
+  #content .w.next { color: var(--text); }
+
+  #topbar {
+    position: absolute; top: 0; left: 0; right: 0; z-index: 10;
+    display: flex; gap: 8px; align-items: center; padding: 12px 16px;
+    background: linear-gradient(#f5f5f1ee, #f5f5f100); transition: opacity .3s;
+  }
+  #topbar.hidden { opacity: 0; pointer-events: none; }
+  #topbar button { background: #16181c12; color: var(--text); border: 1px solid var(--border); padding: 10px 16px; font-size: 15px; backdrop-filter: blur(10px); }
+  #micdot { width: 12px; height: 12px; border-radius: 50%; background: #444; margin-left: 4px; }
+  #micdot.on { background: #2ecc71; box-shadow: 0 0 0 0 #2ecc7160; }
+  #heard { flex: 1; font-size: 13px; color: var(--dim); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; direction: rtl; text-align: left; }
+  #speedCtl { display: none; align-items: center; gap: 6px; color: var(--dim); font-size: 13px; }
+  #speedCtl input { width: 120px; accent-color: var(--accent); }
+  #pausedBadge { position: absolute; top: 50%; left: 50%; transform: translate(-50%,-50%);
+    background: #fffffff2; border: 1px solid var(--border); padding: 14px 26px; border-radius: 14px; box-shadow: 0 8px 30px #0002;
+    font-size: 20px; z-index: 9; display: none; }
+  #marker { position: absolute; left: 0; top: 38vh; width: 14px; height: 4px; background: var(--highlight); border-radius: 2px; z-index: 5; opacity: .8; }
+
+  /* loading overlay */
+  #loader { position: fixed; inset: 0; background: var(--bg); z-index: 50;
+    display: none; flex-direction: column; align-items: center; justify-content: center; gap: 16px; }
+  #loader.show { display: flex; }
+  .spin { width: 36px; height: 36px; border: 3px solid var(--border); border-top-color: var(--accent);
+    border-radius: 50%; animation: sp 1s linear infinite; }
+  @keyframes sp { to { transform: rotate(360deg); } }
+  #loaderText { color: var(--dim); font-size: 15px; }
+</style>
+</head>
+<body>
+
+<!-- ============ EDITOR ============ -->
+<div id="editor" class="screen active">
+  <h1>Суфлер <span>текст зберігається автоматично</span></h1>
+  <textarea id="script" placeholder="Вставте сюди текст уроку…"></textarea>
+  <div class="row">
+    <div class="ctrl">Шрифт <input type="range" id="fontSize" min="28" max="90" value="52"><output id="fontOut">52</output></div>
+    <div class="ctrl">Інтервал <input type="range" id="lineH" min="120" max="220" value="150"><output id="lineOut">1.5</output></div>
+    <div class="ctrl">Ширина <input type="range" id="colW" min="50" max="100" value="90"><output id="colOut">90%</output></div>
+  </div>
+  <div class="row">
+    <button class="btn-mode sel" id="modeVoice">🎙 За голосом</button>
+    <button class="btn-mode" id="modeAuto">▶️ Авто-прокрутка</button>
+    <button id="startBtn">Старт</button>
+  </div>
+  <div id="status"></div>
+</div>
+
+<!-- ============ PROMPTER ============ -->
+<div id="prompter" class="screen">
+  <div id="topbar">
+    <button id="exitBtn">✕ Вийти</button>
+    <button id="fMinus">A−</button>
+    <button id="fPlus">A+</button>
+    <button id="restartBtn">⟲ Спочатку</button>
+    <div id="speedCtl">Швидкість <input type="range" id="speed" min="10" max="150" value="45"></div>
+    <div id="heard"></div>
+    <div id="micdot"></div>
+  </div>
+  <div id="marker"></div>
+  <div id="pausedBadge">Пауза — торкніться, щоб продовжити</div>
+  <div id="scroller"><div id="content"></div></div>
+</div>
+
+<div id="loader"><div class="spin"></div><div id="loaderText">Завантаження…</div></div>
+
+<script src="lib/vosk.js"></script>
+<script>
+"use strict";
+const $ = id => document.getElementById(id);
+
+/* ---------------- state & settings ---------------- */
+const S = {
+  mode: "voice",            // voice | auto
+  fontSize: 52, lineH: 1.5, colW: 90,
+  words: [],                // {raw, norm, el}
+  pos: 0,                   // index of next expected word
+  running: false, paused: false,
+  targetTop: 0, curTop: 0,
+  autoSpeed: 45,            // px/sec
+  model: null, recognizer: null, audioCtx: null, stream: null, procNode: null,
+  wakeLock: null, raf: null, lastT: 0,
+};
+
+/* restore saved */
+try {
+  $("script").value = localStorage.getItem("prompter_text") || "";
+  const cfg = JSON.parse(localStorage.getItem("prompter_cfg") || "{}");
+  Object.assign(S, cfg);
+} catch(e) {}
+$("fontSize").value = S.fontSize; $("lineH").value = S.lineH * 100; $("colW").value = S.colW;
+
+function saveCfg() {
+  localStorage.setItem("prompter_cfg", JSON.stringify({
+    mode: S.mode, fontSize: S.fontSize, lineH: S.lineH, colW: S.colW, autoSpeed: S.autoSpeed
+  }));
+}
+$("script").addEventListener("input", () => localStorage.setItem("prompter_text", $("script").value));
+
+/* ---------------- editor controls ---------------- */
+const syncOuts = () => {
+  $("fontOut").textContent = S.fontSize;
+  $("lineOut").textContent = S.lineH.toFixed(1);
+  $("colOut").textContent = S.colW + "%";
+  /* live preview in the editor: the textarea shows exactly how
+     the prompter text will look */
+  const ta = $("script");
+  ta.style.fontSize = S.fontSize + "px";
+  ta.style.lineHeight = S.lineH;
+  ta.style.width = S.colW + "%";
+  ta.style.margin = "0 auto";
+};
+$("fontSize").oninput = e => { S.fontSize = +e.target.value; syncOuts(); saveCfg(); };
+$("lineH").oninput   = e => { S.lineH = e.target.value / 100; syncOuts(); saveCfg(); };
+$("colW").oninput    = e => { S.colW = +e.target.value; syncOuts(); saveCfg(); };
+syncOuts();
+
+function setMode(m) {
+  S.mode = m; saveCfg();
+  $("modeVoice").classList.toggle("sel", m === "voice");
+  $("modeAuto").classList.toggle("sel", m === "auto");
+}
+$("modeVoice").onclick = () => setMode("voice");
+$("modeAuto").onclick = () => setMode("auto");
+setMode(S.mode);
+
+/* ---------------- text processing ---------------- */
+function normWord(w) {
+  return w.toLowerCase()
+    .replace(/[’'ʼ`]/g, "")
+    .replace(/[^а-щьюяїієґa-z0-9]/gi, "");
+}
+function buildContent() {
+  const text = $("script").value.trim();
+  const content = $("content");
+  content.innerHTML = "";
+  S.words = [];
+  const paragraphs = text.split(/\n+/);
+  for (const p of paragraphs) {
+    const pEl = document.createElement("p");
+    pEl.style.margin = "0 0 0.8em";
+    for (const tok of p.split(/\s+/)) {
+      if (!tok) continue;
+      const span = document.createElement("span");
+      span.className = "w";
+      span.textContent = tok + " ";
+      pEl.appendChild(span);
+      S.words.push({ raw: tok, norm: normWord(tok), el: span });
+    }
+    content.appendChild(pEl);
+  }
+}
+
+/* ---------------- fuzzy matching ----------------
+   Ukrainian endings vary and ASR makes mistakes, so:
+   words match if equal, or share a prefix of >=4 chars,
+   or (len>=5) differ by at most 1 edit. */
+function wordsMatch(a, b) {
+  if (!a || !b) return false;
+  if (a === b) return true;
+  const minL = Math.min(a.length, b.length);
+  if (minL >= 4 && a.slice(0, 4) === b.slice(0, 4)) return true;
+  if (minL >= 5 && Math.abs(a.length - b.length) <= 1) {
+    let diff = 0;
+    for (let i = 0, j = 0; i < a.length && j < b.length; i++, j++) {
+      if (a[i] !== b[j]) {
+        if (++diff > 1) return false;
+        if (a.length > b.length) j--;
+        else if (b.length > a.length) i--;
+      }
+    }
+    return true;
+  }
+  return false;
+}
+
+const LOOKAHEAD = 20;
+/* advance S.pos using words heard from the mic.
+   Commit only on >=2 matched words forming a dense run,
+   so ad-libbing off-script never drags the text. */
+function follow(heardText) {
+  const heard = heardText.split(/\s+/).map(normWord).filter(w => w.length > 2);
+  if (!heard.length) return;
+  const tail = heard.slice(-8);
+  let pos = S.pos, matched = 0;
+  for (const hw of tail) {
+    const limit = Math.min(S.words.length, pos + LOOKAHEAD);
+    for (let j = pos; j < limit; j++) {
+      if (S.words[j].norm.length > 2 && wordsMatch(hw, S.words[j].norm)) {
+        pos = j + 1; matched++; break;
+      }
+    }
+  }
+  if (matched >= 2 && pos > S.pos && (pos - S.pos) <= matched * 6) setPos(pos);
+}
+
+function setPos(pos) {
+  for (let i = S.pos; i < pos && i < S.words.length; i++) {
+    S.words[i].el.className = "w done";
+  }
+  S.pos = pos;
+  const cur = S.words[Math.min(pos, S.words.length - 1)];
+  if (cur) {
+    cur.el.className = "w cur";
+    for (let k = pos + 1; k < Math.min(pos + 12, S.words.length); k++) S.words[k].el.className = "w next";
+    // target: keep current word at 38% of viewport height
+    const parentTop = cur.el.offsetParent ? cur.el.offsetParent.offsetTop : 0;
+    S.targetTop = -(cur.el.offsetTop + parentTop - window.innerHeight * 0.38);
+  }
+}
+
+/* ---------------- scrolling loop ---------------- */
+function loop(t) {
+  S.raf = requestAnimationFrame(loop);
+  const dt = Math.min((t - S.lastT) / 1000, 0.1); S.lastT = t;
+  if (S.mode === "auto") {
+    if (!S.paused) S.targetTop -= S.autoSpeed * dt;
+  }
+  // smooth approach
+  const diff = S.targetTop - S.curTop;
+  S.curTop += diff * Math.min(1, dt * 3.2);
+  if (Math.abs(diff) < 0.3) S.curTop = S.targetTop;
+  $("content").style.top = S.curTop + "px";
+}
+
+/* ---------------- voice engine ---------------- */
+async function loadModel() {
+  if (S.model) return;
+  $("loaderText").textContent = "Завантаження мовної моделі (74 МБ, лише один раз)…";
+  $("loader").classList.add("show");
+  S.model = await Vosk.createModel("model-uk.tar.gz");
+  $("loader").classList.remove("show");
+}
+
+async function startMic() {
+  S.stream = await navigator.mediaDevices.getUserMedia({
+    audio: { echoCancellation: true, noiseSuppression: true, channelCount: 1 }
+  });
+  S.audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+  await S.audioCtx.resume();
+  const rec = new S.model.KaldiRecognizer(S.audioCtx.sampleRate);
+  rec.setWords(false);
+  rec.on("partialresult", m => { const p = m.result.partial; if (p) { follow(p); showHeard(p); } });
+  rec.on("result", m => { const p = m.result.text; if (p) { follow(p); showHeard(p); } });
+  S.recognizer = rec;
+
+  const src = S.audioCtx.createMediaStreamSource(S.stream);
+  const proc = S.audioCtx.createScriptProcessor(4096, 1, 1);
+  proc.onaudioprocess = e => {
+    try { rec.acceptWaveform(e.inputBuffer); } catch(err) {}
+    // mic level indicator
+    const d = e.inputBuffer.getChannelData(0);
+    let sum = 0; for (let i = 0; i < d.length; i += 8) sum += d[i] * d[i];
+    const rms = Math.sqrt(sum / (d.length / 8));
+    const dot = $("micdot");
+    dot.classList.add("on");
+    dot.style.transform = `scale(${1 + Math.min(rms * 14, 1.6)})`;
+  };
+  const mute = S.audioCtx.createGain(); mute.gain.value = 0;
+  src.connect(proc); proc.connect(mute); mute.connect(S.audioCtx.destination);
+  S.procNode = proc; S.srcNode = src; S.muteNode = mute;
+}
+
+function stopMic() {
+  try { S.procNode && S.procNode.disconnect(); S.srcNode && S.srcNode.disconnect(); S.muteNode && S.muteNode.disconnect(); } catch(e){}
+  try { S.recognizer && S.recognizer.remove(); } catch(e){}
+  try { S.stream && S.stream.getTracks().forEach(t => t.stop()); } catch(e){}
+  try { S.audioCtx && S.audioCtx.close(); } catch(e){}
+  S.recognizer = S.audioCtx = S.stream = S.procNode = null;
+  $("micdot").classList.remove("on");
+}
+
+let heardTimer;
+function showHeard(text) {
+  $("heard").textContent = text.split(/\s+/).slice(-7).join(" ");
+  clearTimeout(heardTimer);
+  heardTimer = setTimeout(() => { $("heard").textContent = ""; }, 4000);
+}
+
+/* ---------------- start / stop ---------------- */
+$("startBtn").onclick = async () => {
+  const text = $("script").value.trim();
+  const st = $("status");
+  st.className = ""; st.textContent = "";
+  if (!text) { st.className = "err"; st.textContent = "Спочатку вставте текст."; return; }
+  $("startBtn").disabled = true;
+  try {
+    if (S.mode === "voice") {
+      await loadModel();
+      await startMic();
+    }
+    enterPrompter();
+  } catch (e) {
+    $("loader").classList.remove("show");
+    st.className = "err";
+    st.textContent = e.name === "NotAllowedError"
+      ? "Немає доступу до мікрофона. Дозвольте доступ у налаштуваннях Safari."
+      : "Помилка: " + (e.message || e);
+    stopMic();
+  }
+  $("startBtn").disabled = false;
+};
+
+function applyTypography() {
+  const c = $("content");
+  c.style.fontSize = S.fontSize + "px";
+  c.style.lineHeight = S.lineH;
+  c.style.width = S.colW + "%";
+  c.style.maxWidth = "1100px";
+}
+
+function enterPrompter() {
+  buildContent();
+  applyTypography();
+  S.pos = 0; S.curTop = 0; S.targetTop = 0; S.paused = false;
+  $("pausedBadge").style.display = "none";
+  $("speedCtl").style.display = S.mode === "auto" ? "flex" : "none";
+  $("speed").value = S.autoSpeed;
+  $("editor").classList.remove("active");
+  $("prompter").classList.add("active");
+  setPos(0);
+  S.curTop = S.targetTop; // start without animation jump
+  S.running = true; S.lastT = performance.now();
+  S.raf = requestAnimationFrame(loop);
+  requestWakeLock();
+  if (document.documentElement.requestFullscreen) document.documentElement.requestFullscreen().catch(()=>{});
+  scheduleBarHide();
+}
+
+function exitPrompter() {
+  S.running = false;
+  cancelAnimationFrame(S.raf);
+  stopMic();
+  releaseWakeLock();
+  if (document.fullscreenElement) document.exitFullscreen().catch(()=>{});
+  $("prompter").classList.remove("active");
+  $("editor").classList.add("active");
+}
+$("exitBtn").onclick = exitPrompter;
+$("restartBtn").onclick = () => {
+  S.words.forEach(w => w.el.className = "w");
+  S.pos = 0; setPos(0); S.curTop = S.targetTop;
+};
+$("fPlus").onclick = () => { S.fontSize = Math.min(S.fontSize + 4, 90); applyTypography(); saveCfg(); setPos(S.pos); $("fontSize").value = S.fontSize; syncOuts(); };
+$("fMinus").onclick = () => { S.fontSize = Math.max(S.fontSize - 4, 28); applyTypography(); saveCfg(); setPos(S.pos); $("fontSize").value = S.fontSize; syncOuts(); };
+$("speed").oninput = e => { S.autoSpeed = +e.target.value; saveCfg(); };
+
+/* tap: auto mode → pause/resume; voice mode → show/hide bar */
+let barTimer;
+function scheduleBarHide() {
+  clearTimeout(barTimer);
+  barTimer = setTimeout(() => $("topbar").classList.add("hidden"), 4000);
+}
+$("scroller").addEventListener("click", () => {
+  if (S.mode === "auto") {
+    S.paused = !S.paused;
+    $("pausedBadge").style.display = S.paused ? "block" : "none";
+  }
+  $("topbar").classList.remove("hidden");
+  scheduleBarHide();
+});
+$("topbar").addEventListener("click", scheduleBarHide);
+
+/* ---------------- wake lock ---------------- */
+async function requestWakeLock() {
+  try { S.wakeLock = await navigator.wakeLock.request("screen"); } catch(e) {}
+}
+function releaseWakeLock() { try { S.wakeLock && S.wakeLock.release(); S.wakeLock = null; } catch(e) {} }
+document.addEventListener("visibilitychange", () => {
+  if (document.visibilityState === "visible" && S.running) requestWakeLock();
+});
+</script>
+</body>
+</html>
