@@ -284,12 +284,46 @@ function loop(t) {
 }
 
 /* ---------------- voice engine ---------------- */
+const setLoader = t => { $("loaderText").textContent = t; };
+/* surface any silent worker/promise errors onto the loader screen */
+window.addEventListener("error", e => {
+  if ($("loader").classList.contains("show"))
+    setLoader("Помилка: " + (e.message || "невідома") + " — перезавантажте сторінку");
+});
+window.addEventListener("unhandledrejection", e => {
+  if ($("loader").classList.contains("show"))
+    setLoader("Помилка: " + (e.reason && e.reason.message || e.reason || "невідома") + " — перезавантажте сторінку");
+});
+function withTimeout(promise, ms, what) {
+  return Promise.race([promise, new Promise((_, rej) =>
+    setTimeout(() => rej(new Error(what + " — не вдалося за " + (ms/1000) + " с. Перезавантажте сторінку.")), ms))]);
+}
+
 async function loadModel() {
   if (S.model) return;
-  $("loaderText").textContent = "Завантаження мовної моделі (74 МБ, лише один раз)…";
   $("loader").classList.add("show");
-  S.model = await Vosk.createModel("model-uk.tar.gz");
-  $("loader").classList.remove("show");
+  try {
+    /* step 1: download with visible progress (warms the browser cache) */
+    setLoader("Завантаження мовної моделі… 0%");
+    const resp = await fetch("model-uk.tar.gz");
+    if (!resp.ok) throw new Error("не вдалося завантажити модель (HTTP " + resp.status + ")");
+    const total = +resp.headers.get("Content-Length") || 77620626;
+    const reader = resp.body.getReader();
+    let got = 0;
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      got += value.length;
+      setLoader("Завантаження мовної моделі… " + Math.min(100, Math.round(got / total * 100)) + "%");
+    }
+    /* step 2: initialize the recognizer (reads from cache) */
+    setLoader("Розпакування та запуск розпізнавача… (до 1–2 хв на iPad)");
+    S.model = await withTimeout(Vosk.createModel("model-uk.tar.gz"), 180000, "Запуск розпізнавача");
+    $("loader").classList.remove("show");
+  } catch (e) {
+    setLoader("Помилка: " + (e.message || e));
+    throw e;
+  }
 }
 
 async function startMic() {
