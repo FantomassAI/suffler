@@ -94,7 +94,7 @@
   <h1>Суфлер <span>текст зберігається автоматично</span></h1>
   <textarea id="script" placeholder="Вставте сюди текст уроку…"></textarea>
   <div class="row">
-    <div class="ctrl">Шрифт <input type="range" id="fontSize" min="28" max="90" value="52"><output id="fontOut">52</output></div>
+    <div class="ctrl">Шрифт <input type="range" id="fontSize" min="20" max="90" value="52"><output id="fontOut">52</output></div>
     <div class="ctrl">Інтервал <input type="range" id="lineH" min="120" max="220" value="150"><output id="lineOut">1.5</output></div>
     <div class="ctrl">Ширина <input type="range" id="colW" min="50" max="100" value="90"><output id="colOut">90%</output></div>
   </div>
@@ -239,14 +239,17 @@ function wordsMatch(a, b) {
   return false;
 }
 
-const LOOKAHEAD = 20;
+const LOOKAHEAD = 45;
 /* advance S.pos using words heard from the mic.
-   Commit only on >=2 matched words forming a dense run,
-   so ad-libbing off-script never drags the text. */
+   Commit rules balance snappiness vs ad-lib safety:
+   - a single word advancing exactly to the next expected word → instant;
+   - >=2 matches forming a dense run → normal reading;
+   - >=4 matches → strong evidence, allows catching up after a
+     mis-recognized stretch (e.g. a new paragraph). */
 function follow(heardText) {
   const heard = heardText.split(/\s+/).map(normWord).filter(w => w.length > 2);
   if (!heard.length) return;
-  const tail = heard.slice(-8);
+  const tail = heard.slice(-10);
   let pos = S.pos, matched = 0;
   for (const hw of tail) {
     const limit = Math.min(S.words.length, pos + LOOKAHEAD);
@@ -256,7 +259,11 @@ function follow(heardText) {
       }
     }
   }
-  if (matched >= 2 && pos > S.pos && (pos - S.pos) <= matched * 6) setPos(pos);
+  if (pos <= S.pos) return;
+  const jump = pos - S.pos;
+  if ((matched === 1 && jump <= 2) ||
+      (matched >= 2 && jump <= matched * 8) ||
+      matched >= 4) setPos(pos);
 }
 
 function setPos(pos) {
@@ -274,7 +281,7 @@ function setPos(pos) {
     }
     // keep the reading position vertically centered;
     // offsetTop is relative to #content, so no other terms belong here
-    const t = -(cur.el.offsetTop - window.innerHeight * 0.5);
+    const t = -(cur.el.offsetTop - window.innerHeight * 0.44);
     // text may only move up — never jerk back down
     if (t < S.targetTop) S.targetTop = t;
   }
@@ -289,7 +296,7 @@ function loop(t) {
   }
   // smooth approach
   const diff = S.targetTop - S.curTop;
-  S.curTop += diff * Math.min(1, dt * 3.2);
+  S.curTop += diff * Math.min(1, dt * 4.5);
   if (Math.abs(diff) < 0.3) S.curTop = S.targetTop;
   $("content").style.top = S.curTop + "px";
 }
@@ -365,7 +372,7 @@ async function startMic() {
   S.recognizer = rec;
 
   const src = S.audioCtx.createMediaStreamSource(S.stream);
-  const proc = S.audioCtx.createScriptProcessor(4096, 1, 1);
+  const proc = S.audioCtx.createScriptProcessor(2048, 1, 1);
   proc.onaudioprocess = e => {
     try { rec.acceptWaveform(e.inputBuffer); } catch(err) {}
     // mic level indicator
@@ -466,7 +473,7 @@ $("restartBtn").onclick = () => {
   S.pos = 0; S.curSent = -1; S.targetTop = Infinity; setPos(0); S.curTop = S.targetTop;
 };
 $("fPlus").onclick = () => { S.fontSize = Math.min(S.fontSize + 4, 90); applyTypography(); saveCfg(); setPos(S.pos); $("fontSize").value = S.fontSize; syncOuts(); };
-$("fMinus").onclick = () => { S.fontSize = Math.max(S.fontSize - 4, 28); applyTypography(); saveCfg(); setPos(S.pos); $("fontSize").value = S.fontSize; syncOuts(); };
+$("fMinus").onclick = () => { S.fontSize = Math.max(S.fontSize - 4, 20); applyTypography(); saveCfg(); setPos(S.pos); $("fontSize").value = S.fontSize; syncOuts(); };
 $("speed").oninput = e => { S.autoSpeed = +e.target.value; saveCfg(); };
 
 /* tap: auto mode → pause/resume; voice mode → show/hide bar */
