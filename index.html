@@ -284,7 +284,12 @@ function loop(t) {
 }
 
 /* ---------------- voice engine ---------------- */
-const setLoader = t => { $("loaderText").textContent = t; };
+const setLoader = t => {
+  $("loaderText").textContent = t;
+  /* mirror progress into the editor status line (background preload) */
+  const st = $("status");
+  if (!st.classList.contains("err")) st.textContent = t;
+};
 /* surface any silent worker/promise errors onto the loader screen */
 window.addEventListener("error", e => {
   if ($("loader").classList.contains("show"))
@@ -300,12 +305,13 @@ function withTimeout(promise, ms, what) {
 }
 
 async function loadModel() {
-  if (S.model) return;
-  $("loader").classList.add("show");
+  /* Safari resolves worker-relative paths differently, so the model URL
+     must be absolute — a relative path 404s silently inside the worker. */
+  const MODEL_URL = new URL("model-uk.tar.gz", location.href).href;
   try {
     /* step 1: download with visible progress (warms the browser cache) */
-    setLoader("Завантаження мовної моделі… 0%");
-    const resp = await fetch("model-uk.tar.gz");
+    setLoader("Підготовка розпізнавача… 0%");
+    const resp = await fetch(MODEL_URL);
     if (!resp.ok) throw new Error("не вдалося завантажити модель (HTTP " + resp.status + ")");
     const total = +resp.headers.get("Content-Length") || 77620626;
     const reader = resp.body.getReader();
@@ -314,17 +320,26 @@ async function loadModel() {
       const { done, value } = await reader.read();
       if (done) break;
       got += value.length;
-      setLoader("Завантаження мовної моделі… " + Math.min(100, Math.round(got / total * 100)) + "%");
+      setLoader("Підготовка розпізнавача… " + Math.min(100, Math.round(got / total * 100)) + "%");
     }
     /* step 2: initialize the recognizer (reads from cache) */
-    setLoader("Розпакування та запуск розпізнавача… (до 1–2 хв на iPad)");
-    S.model = await withTimeout(Vosk.createModel("model-uk.tar.gz"), 180000, "Запуск розпізнавача");
-    $("loader").classList.remove("show");
+    setLoader("Запуск розпізнавача…");
+    S.model = await withTimeout(Vosk.createModel(MODEL_URL), 180000, "Запуск розпізнавача");
+    setLoader("Розпізнавач готовий ✓");
   } catch (e) {
     setLoader("Помилка: " + (e.message || e));
     throw e;
   }
 }
+
+/* preload once per page load; retried automatically if it failed */
+let modelPromise = null;
+function ensureModel() {
+  if (S.model) return Promise.resolve();
+  if (!modelPromise) modelPromise = loadModel().catch(e => { modelPromise = null; throw e; });
+  return modelPromise;
+}
+window.addEventListener("load", () => { ensureModel().catch(() => {}); });
 
 async function startMic() {
   S.stream = await navigator.mediaDevices.getUserMedia({
@@ -380,7 +395,11 @@ $("startBtn").onclick = async () => {
   $("startBtn").disabled = true;
   try {
     if (S.mode === "voice") {
-      await loadModel();
+      if (!S.model) {
+        $("loader").classList.add("show");
+        await ensureModel();
+        $("loader").classList.remove("show");
+      }
       await startMic();
     }
     enterPrompter();
