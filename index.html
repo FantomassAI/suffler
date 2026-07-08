@@ -272,9 +272,11 @@ function setPos(pos) {
       S.curSent = cur.sent;
       if (S.sentEls[S.curSent]) S.sentEls[S.curSent].forEach(el => el.classList.add("cursent"));
     }
-    // keep the reading position vertically centered
-    const parentTop = cur.el.offsetParent ? cur.el.offsetParent.offsetTop : 0;
-    S.targetTop = -(cur.el.offsetTop + parentTop - window.innerHeight * 0.5);
+    // keep the reading position vertically centered;
+    // offsetTop is relative to #content, so no other terms belong here
+    const t = -(cur.el.offsetTop - window.innerHeight * 0.5);
+    // text may only move up — never jerk back down
+    if (t < S.targetTop) S.targetTop = t;
   }
 }
 
@@ -434,7 +436,7 @@ function applyTypography() {
 function enterPrompter() {
   buildContent();
   applyTypography();
-  S.pos = 0; S.curTop = 0; S.targetTop = 0; S.paused = false; S.curSent = -1;
+  S.pos = 0; S.curTop = 0; S.targetTop = Infinity; S.paused = false; S.curSent = -1;
   $("pausedBadge").style.display = "none";
   $("speedCtl").style.display = S.mode === "auto" ? "flex" : "none";
   $("speed").value = S.autoSpeed;
@@ -461,7 +463,7 @@ function exitPrompter() {
 $("exitBtn").onclick = exitPrompter;
 $("restartBtn").onclick = () => {
   S.words.forEach(w => w.el.className = "w");
-  S.pos = 0; S.curSent = -1; setPos(0); S.curTop = S.targetTop;
+  S.pos = 0; S.curSent = -1; S.targetTop = Infinity; setPos(0); S.curTop = S.targetTop;
 };
 $("fPlus").onclick = () => { S.fontSize = Math.min(S.fontSize + 4, 90); applyTypography(); saveCfg(); setPos(S.pos); $("fontSize").value = S.fontSize; syncOuts(); };
 $("fMinus").onclick = () => { S.fontSize = Math.max(S.fontSize - 4, 28); applyTypography(); saveCfg(); setPos(S.pos); $("fontSize").value = S.fontSize; syncOuts(); };
