@@ -91,7 +91,7 @@
 
 <!-- ============ EDITOR ============ -->
 <div id="editor" class="screen active">
-  <h1>Суфлер <span>текст зберігається автоматично</span></h1>
+  <h1>Суфлер <span>текст зберігається автоматично · v8</span></h1>
   <textarea id="script" placeholder="Вставте сюди текст уроку…"></textarea>
   <div class="row">
     <div class="ctrl">Шрифт <input type="range" id="fontSize" min="20" max="90" value="52"><output id="fontOut">52</output></div>
@@ -286,6 +286,7 @@ function followWords(fresh) {
 let utterSeen = 0;
 function follow(heardText, isFinal) {
   const heard = heardText.split(/\s+/).map(normWord).filter(w => w.length > 2);
+  if (utterSeen > heard.length) utterSeen = heard.length; // partial was revised shorter
   const fresh = heard.slice(utterSeen);
   utterSeen = isFinal ? 0 : heard.length;
   followWords(fresh);
