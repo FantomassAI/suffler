@@ -52,13 +52,13 @@
   #scroller { flex: 1; overflow: hidden; position: relative; }
   #content {
     position: absolute; left: 50%; transform: translateX(-50%);
-    padding: 45vh 24px 70vh; will-change: top; top: 0;
+    padding: 52vh 24px 60vh; will-change: top; top: 0;
     text-align: left; font-weight: 600;
   }
-  #content .w { color: #a8aaa4; transition: color .25s, background .25s; border-radius: 6px; }
-  #content .w.done { color: #d3d3cc; }
-  #content .w.cur { color: #000; background: var(--highlight); }
-  #content .w.next { color: var(--text); }
+  #content .w { color: var(--text); transition: color .3s; }
+  #content .w.done { color: #c6c6bf; }
+  #content .w.cursent { text-decoration: underline; text-decoration-color: var(--highlight);
+    text-decoration-thickness: 7px; text-underline-offset: 0.18em; text-decoration-skip-ink: none; }
 
   #topbar {
     position: absolute; top: 0; left: 0; right: 0; z-index: 10;
@@ -75,7 +75,7 @@
   #pausedBadge { position: absolute; top: 50%; left: 50%; transform: translate(-50%,-50%);
     background: #fffffff2; border: 1px solid var(--border); padding: 14px 26px; border-radius: 14px; box-shadow: 0 8px 30px #0002;
     font-size: 20px; z-index: 9; display: none; }
-  #marker { position: absolute; left: 0; top: 38vh; width: 14px; height: 4px; background: var(--highlight); border-radius: 2px; z-index: 5; opacity: .8; }
+  #marker { position: absolute; left: 0; top: 50vh; width: 14px; height: 4px; background: var(--highlight); border-radius: 2px; z-index: 5; opacity: .8; }
 
   /* loading overlay */
   #loader { position: fixed; inset: 0; background: var(--bg); z-index: 50;
@@ -195,6 +195,8 @@ function buildContent() {
   const content = $("content");
   content.innerHTML = "";
   S.words = [];
+  S.sentEls = [];
+  let sent = 0;
   const paragraphs = text.split(/\n+/);
   for (const p of paragraphs) {
     const pEl = document.createElement("p");
@@ -205,8 +207,11 @@ function buildContent() {
       span.className = "w";
       span.textContent = tok + " ";
       pEl.appendChild(span);
-      S.words.push({ raw: tok, norm: normWord(tok), el: span });
+      S.words.push({ raw: tok, norm: normWord(tok), el: span, sent });
+      (S.sentEls[sent] = S.sentEls[sent] || []).push(span);
+      if (/[.!?…]["»)]?$/.test(tok)) sent++;
     }
+    sent++; // paragraph break always ends a sentence
     content.appendChild(pEl);
   }
 }
@@ -256,16 +261,20 @@ function follow(heardText) {
 
 function setPos(pos) {
   for (let i = S.pos; i < pos && i < S.words.length; i++) {
-    S.words[i].el.className = "w done";
+    S.words[i].el.classList.add("done");
   }
   S.pos = pos;
   const cur = S.words[Math.min(pos, S.words.length - 1)];
   if (cur) {
-    cur.el.className = "w cur";
-    for (let k = pos + 1; k < Math.min(pos + 12, S.words.length); k++) S.words[k].el.className = "w next";
-    // target: keep current word at 38% of viewport height
+    // underline the whole current sentence, not individual words
+    if (S.curSent !== cur.sent) {
+      if (S.sentEls[S.curSent]) S.sentEls[S.curSent].forEach(el => el.classList.remove("cursent"));
+      S.curSent = cur.sent;
+      if (S.sentEls[S.curSent]) S.sentEls[S.curSent].forEach(el => el.classList.add("cursent"));
+    }
+    // keep the reading position vertically centered
     const parentTop = cur.el.offsetParent ? cur.el.offsetParent.offsetTop : 0;
-    S.targetTop = -(cur.el.offsetTop + parentTop - window.innerHeight * 0.38);
+    S.targetTop = -(cur.el.offsetTop + parentTop - window.innerHeight * 0.5);
   }
 }
 
@@ -425,7 +434,7 @@ function applyTypography() {
 function enterPrompter() {
   buildContent();
   applyTypography();
-  S.pos = 0; S.curTop = 0; S.targetTop = 0; S.paused = false;
+  S.pos = 0; S.curTop = 0; S.targetTop = 0; S.paused = false; S.curSent = -1;
   $("pausedBadge").style.display = "none";
   $("speedCtl").style.display = S.mode === "auto" ? "flex" : "none";
   $("speed").value = S.autoSpeed;
@@ -452,7 +461,7 @@ function exitPrompter() {
 $("exitBtn").onclick = exitPrompter;
 $("restartBtn").onclick = () => {
   S.words.forEach(w => w.el.className = "w");
-  S.pos = 0; setPos(0); S.curTop = S.targetTop;
+  S.pos = 0; S.curSent = -1; setPos(0); S.curTop = S.targetTop;
 };
 $("fPlus").onclick = () => { S.fontSize = Math.min(S.fontSize + 4, 90); applyTypography(); saveCfg(); setPos(S.pos); $("fontSize").value = S.fontSize; syncOuts(); };
 $("fMinus").onclick = () => { S.fontSize = Math.max(S.fontSize - 4, 28); applyTypography(); saveCfg(); setPos(S.pos); $("fontSize").value = S.fontSize; syncOuts(); };
