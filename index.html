@@ -294,9 +294,14 @@ function loop(t) {
   if (S.mode === "auto") {
     if (!S.paused) S.targetTop -= S.autoSpeed * dt;
   }
-  // smooth approach
+  // smooth approach with a hard speed cap: the text glides like a
+  // conveyor belt and can never jerk, even after a big catch-up
   const diff = S.targetTop - S.curTop;
-  S.curTop += diff * Math.min(1, dt * 4.5);
+  const lineH = S.fontSize * S.lineH;               // px per text line
+  const maxV = lineH * 3.2;                          // max px/sec (~3 lines/s)
+  let v = diff * 2.2;                                // gentle proportional pull
+  if (v < -maxV) v = -maxV; if (v > maxV) v = maxV;
+  S.curTop += v * dt;
   if (Math.abs(diff) < 0.3) S.curTop = S.targetTop;
   $("content").style.top = S.curTop + "px";
 }
