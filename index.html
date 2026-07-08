@@ -246,12 +246,9 @@ const LOOKAHEAD = 45;
    - >=2 matches forming a dense run → normal reading;
    - >=4 matches → strong evidence, allows catching up after a
      mis-recognized stretch (e.g. a new paragraph). */
-function follow(heardText) {
-  const heard = heardText.split(/\s+/).map(normWord).filter(w => w.length > 2);
-  if (!heard.length) return;
-  const tail = heard.slice(-10);
-  let pos = S.pos, matched = 0;
-  for (const hw of tail) {
+function scanFrom(start, words) {
+  let pos = start, matched = 0;
+  for (const hw of words) {
     const limit = Math.min(S.words.length, pos + LOOKAHEAD);
     for (let j = pos; j < limit; j++) {
       if (S.words[j].norm.length > 2 && wordsMatch(hw, S.words[j].norm)) {
@@ -259,16 +256,48 @@ function follow(heardText) {
       }
     }
   }
-  if (pos <= S.pos) return;
-  const jump = pos - S.pos;
-  if ((matched === 1 && jump <= 2) ||
-      (matched >= 2 && jump <= matched * 8) ||
-      matched >= 4) setPos(pos);
+  return { pos, matched };
+}
+
+let stall = 0, recent = [];
+function followWords(fresh) {
+  if (!fresh.length) return;
+  recent.push(...fresh);
+  if (recent.length > 14) recent = recent.slice(-14);
+  const { pos, matched } = scanFrom(S.pos, fresh.slice(-10));
+  if (pos > S.pos) {
+    const jump = pos - S.pos;
+    if ((matched === 1 && jump <= 2) ||
+        (matched >= 2 && jump <= matched * 8) ||
+        matched >= 4) { stall = 0; setPos(pos); return; }
+  }
+  /* recovery: words keep coming but nothing matches ahead — the pointer
+     likely drifted past the reader; scan BEHIND with the recent-words
+     buffer and quietly re-anchor */
+  if (++stall >= 5) {
+    const back = scanFrom(Math.max(0, S.pos - 40), recent.slice(-10));
+    if (back.matched >= 4 && back.pos !== S.pos) { stall = 0; setPos(back.pos); }
+  }
+}
+
+/* Vosk partials are cumulative within an utterance — every word must be
+   consumed exactly once, or repeats re-match similar words further ahead
+   and drag the pointer away from the reader. */
+let utterSeen = 0;
+function follow(heardText, isFinal) {
+  const heard = heardText.split(/\s+/).map(normWord).filter(w => w.length > 2);
+  const fresh = heard.slice(utterSeen);
+  utterSeen = isFinal ? 0 : heard.length;
+  followWords(fresh);
 }
 
 function setPos(pos) {
   for (let i = S.pos; i < pos && i < S.words.length; i++) {
     S.words[i].el.classList.add("done");
+  }
+  /* re-anchoring backward: un-fade what is being read again */
+  for (let i = pos; i < S.pos && i < S.words.length; i++) {
+    S.words[i].el.classList.remove("done");
   }
   S.pos = pos;
   const cur = S.words[Math.min(pos, S.words.length - 1)];
@@ -372,8 +401,8 @@ async function startMic() {
   await S.audioCtx.resume();
   const rec = new S.model.KaldiRecognizer(S.audioCtx.sampleRate);
   rec.setWords(false);
-  rec.on("partialresult", m => { const p = m.result.partial; if (p) { follow(p); showHeard(p); } });
-  rec.on("result", m => { const p = m.result.text; if (p) { follow(p); showHeard(p); } });
+  rec.on("partialresult", m => { const p = m.result.partial; if (p) { follow(p, false); showHeard(p); } });
+  rec.on("result", m => { const p = m.result.text; if (p) { follow(p, true); showHeard(p); } });
   S.recognizer = rec;
 
   const src = S.audioCtx.createMediaStreamSource(S.stream);
@@ -449,6 +478,7 @@ function enterPrompter() {
   buildContent();
   applyTypography();
   S.pos = 0; S.curTop = 0; S.targetTop = Infinity; S.paused = false; S.curSent = -1;
+  utterSeen = 0; stall = 0; recent = [];
   $("pausedBadge").style.display = "none";
   $("speedCtl").style.display = S.mode === "auto" ? "flex" : "none";
   $("speed").value = S.autoSpeed;
