@@ -91,7 +91,7 @@
 
 <!-- ============ EDITOR ============ -->
 <div id="editor" class="screen active">
-  <h1>Суфлер <span>текст зберігається автоматично · v8</span></h1>
+  <h1>Суфлер <span>текст зберігається автоматично · v9</span></h1>
   <textarea id="script" placeholder="Вставте сюди текст уроку…"></textarea>
   <div class="row">
     <div class="ctrl">Шрифт <input type="range" id="fontSize" min="20" max="90" value="52"><output id="fontOut">52</output></div>
@@ -196,7 +196,7 @@ function buildContent() {
   content.innerHTML = "";
   S.words = [];
   S.sentEls = [];
-  let sent = 0;
+  let sent = 0, inStage = false;
   const paragraphs = text.split(/\n+/);
   for (const p of paragraphs) {
     const pEl = document.createElement("p");
@@ -207,13 +207,29 @@ function buildContent() {
       span.className = "w";
       span.textContent = tok + " ";
       pEl.appendChild(span);
-      S.words.push({ raw: tok, norm: normWord(tok), el: span, sent });
+      /* stage directions like ‹ВСТАВ: скрин› or [пауза] are never read aloud */
+      if (/^[‹\[(]/.test(tok)) inStage = true;
+      const stage = inStage;
+      if (/[›\])]\.?,?$/.test(tok)) inStage = false;
+      const norm = normWord(tok);
+      /* matchable = something the Ukrainian recognizer could actually emit:
+         cyrillic, длинее 2 букв, не ремарка. Латиниця, цифри, символи —
+         "прозорі": їх перестрибуємо безкоштовно. */
+      const matchable = !stage && norm.length > 2 && /[а-яїієґ]/.test(norm);
+      S.words.push({ raw: tok, norm, el: span, sent, matchable });
       (S.sentEls[sent] = S.sentEls[sent] || []).push(span);
       if (/[.!?…]["»)]?$/.test(tok)) sent++;
     }
     sent++; // paragraph break always ends a sentence
     content.appendChild(pEl);
   }
+  /* index of matchable words for gap-free scanning */
+  S.midx = []; S.mBefore = new Array(S.words.length + 1);
+  S.words.forEach((w, i) => {
+    S.mBefore[i] = S.midx.length;
+    if (w.matchable) S.midx.push(i);
+  });
+  S.mBefore[S.words.length] = S.midx.length;
 }
 
 /* ---------------- fuzzy matching ----------------
@@ -246,17 +262,24 @@ const LOOKAHEAD = 45;
    - >=2 matches forming a dense run → normal reading;
    - >=4 matches → strong evidence, allows catching up after a
      mis-recognized stretch (e.g. a new paragraph). */
-function scanFrom(start, words) {
-  let pos = start, matched = 0;
+/* scan in "matchable words" space: unpronounceable tokens
+   (latin, numbers, stage directions) are transparent */
+function scanFrom(fullStart, words) {
+  const mpStart = S.mBefore[Math.min(fullStart, S.words.length)];
+  let mp = mpStart, matched = 0, lastM = -1;
   for (const hw of words) {
-    const limit = Math.min(S.words.length, pos + LOOKAHEAD);
-    for (let j = pos; j < limit; j++) {
-      if (S.words[j].norm.length > 2 && wordsMatch(hw, S.words[j].norm)) {
-        pos = j + 1; matched++; break;
+    const limit = Math.min(S.midx.length, mp + LOOKAHEAD);
+    for (let j = mp; j < limit; j++) {
+      if (wordsMatch(hw, S.words[S.midx[j]].norm)) {
+        mp = j + 1; matched++; lastM = j; break;
       }
     }
   }
-  return { pos, matched };
+  return {
+    pos: lastM >= 0 ? S.midx[lastM] + 1 : fullStart,
+    mjump: mp - mpStart,
+    matched
+  };
 }
 
 let stall = 0, recent = [];
@@ -264,11 +287,10 @@ function followWords(fresh) {
   if (!fresh.length) return;
   recent.push(...fresh);
   if (recent.length > 14) recent = recent.slice(-14);
-  const { pos, matched } = scanFrom(S.pos, fresh.slice(-10));
+  const { pos, matched, mjump } = scanFrom(S.pos, fresh.slice(-10));
   if (pos > S.pos) {
-    const jump = pos - S.pos;
-    if ((matched === 1 && jump <= 2) ||
-        (matched >= 2 && jump <= matched * 8) ||
+    if ((matched === 1 && mjump <= 2) ||
+        (matched >= 2 && mjump <= matched * 8) ||
         matched >= 4) { stall = 0; setPos(pos); return; }
   }
   /* recovery: words keep coming but nothing matches ahead — the pointer
