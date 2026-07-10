@@ -91,7 +91,7 @@
 
 <!-- ============ EDITOR ============ -->
 <div id="editor" class="screen active">
-  <h1>Суфлер <span>текст зберігається автоматично · v9</span></h1>
+  <h1>Суфлер <span>текст зберігається автоматично · v10</span></h1>
   <textarea id="script" placeholder="Вставте сюди текст уроку…"></textarea>
   <div class="row">
     <div class="ctrl">Шрифт <input type="range" id="fontSize" min="20" max="90" value="52"><output id="fontOut">52</output></div>
@@ -230,6 +230,8 @@ function buildContent() {
     if (w.matchable) S.midx.push(i);
   });
   S.mBefore[S.words.length] = S.midx.length;
+  /* sentence of the last real (spoken) word — the "finish line" */
+  S.endSent = S.midx.length ? S.words[S.midx[S.midx.length - 1]].sent : -1;
 }
 
 /* ---------------- fuzzy matching ----------------
@@ -337,6 +339,32 @@ function setPos(pos) {
     // text may only move up — never jerk back down
     if (t < S.targetTop) S.targetTop = t;
   }
+  // auto-restart: once every spoken word is consumed, (re)arm an 8s idle
+  // timer; silence at the very end restarts from the top on its own
+  const remaining = S.midx.length - S.mBefore[Math.min(S.pos, S.words.length)];
+  if (S.midx.length && remaining <= 0) armEndTimer();
+  else clearEndTimer();
+}
+
+/* ---------------- auto-restart at the end ---------------- */
+let endTimer = null;
+const AUTO_RESTART_MS = 8000;
+function clearEndTimer() {
+  if (endTimer) { clearTimeout(endTimer); endTimer = null; }
+  if (S.mode === "voice") $("pausedBadge").style.display = "none";
+}
+function armEndTimer() {
+  if (endTimer) clearTimeout(endTimer);
+  $("pausedBadge").textContent = "Кінець уроку — авто-перезапуск за 8 с";
+  $("pausedBadge").style.display = "block";
+  endTimer = setTimeout(() => { endTimer = null; restartToStart(); }, AUTO_RESTART_MS);
+}
+function restartToStart() {
+  clearEndTimer();
+  S.words.forEach(w => w.el.className = "w");
+  S.pos = 0; S.curSent = -1; S.targetTop = Infinity;
+  utterSeen = 0; stall = 0; recent = [];
+  setPos(0); S.curTop = S.targetTop;
 }
 
 /* ---------------- scrolling loop ---------------- */
@@ -518,6 +546,7 @@ function enterPrompter() {
 
 function exitPrompter() {
   S.running = false;
+  clearEndTimer();
   cancelAnimationFrame(S.raf);
   stopMic();
   releaseWakeLock();
@@ -526,10 +555,7 @@ function exitPrompter() {
   $("editor").classList.add("active");
 }
 $("exitBtn").onclick = exitPrompter;
-$("restartBtn").onclick = () => {
-  S.words.forEach(w => w.el.className = "w");
-  S.pos = 0; S.curSent = -1; S.targetTop = Infinity; setPos(0); S.curTop = S.targetTop;
-};
+$("restartBtn").onclick = restartToStart;
 $("fPlus").onclick = () => { S.fontSize = Math.min(S.fontSize + 4, 90); applyTypography(); saveCfg(); setPos(S.pos); $("fontSize").value = S.fontSize; syncOuts(); };
 $("fMinus").onclick = () => { S.fontSize = Math.max(S.fontSize - 4, 20); applyTypography(); saveCfg(); setPos(S.pos); $("fontSize").value = S.fontSize; syncOuts(); };
 $("speed").oninput = e => { S.autoSpeed = +e.target.value; saveCfg(); };
