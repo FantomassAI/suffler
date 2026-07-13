@@ -49,14 +49,14 @@
 
   /* ---------- Prompter ---------- */
   #prompter { background: var(--bg); position: relative; overflow: hidden; }
-  #scroller { flex: 1; overflow: hidden; position: relative; }
+  #scroller { flex: 1; overflow: hidden; position: relative; touch-action: none; }
   #content {
     position: absolute; left: 50%; transform: translateX(-50%);
     padding: 52vh 24px 60vh; will-change: top; top: 0;
     text-align: left; font-weight: 600;
   }
   #content .w { color: var(--text); transition: color .3s; }
-  #content .w.done { color: #c6c6bf; }
+  #content .w.done { color: #a9a9a1; }
   #content .w.cursent { text-decoration: underline; text-decoration-color: var(--highlight);
     text-decoration-thickness: 7px; text-underline-offset: 0.18em; text-decoration-skip-ink: none; }
 
@@ -91,7 +91,7 @@
 
 <!-- ============ EDITOR ============ -->
 <div id="editor" class="screen active">
-  <h1>Суфлер <span>текст зберігається автоматично · v10</span></h1>
+  <h1>Суфлер <span>текст зберігається автоматично · v11</span></h1>
   <textarea id="script" placeholder="Вставте сюди текст уроку…"></textarea>
   <div class="row">
     <div class="ctrl">Шрифт <input type="range" id="fontSize" min="20" max="90" value="52"><output id="fontOut">52</output></div>
@@ -339,28 +339,9 @@ function setPos(pos) {
     // text may only move up — never jerk back down
     if (t < S.targetTop) S.targetTop = t;
   }
-  // auto-restart: once every spoken word is consumed, (re)arm an 8s idle
-  // timer; silence at the very end restarts from the top on its own
-  const remaining = S.midx.length - S.mBefore[Math.min(S.pos, S.words.length)];
-  if (S.midx.length && remaining <= 0) armEndTimer();
-  else clearEndTimer();
 }
 
-/* ---------------- auto-restart at the end ---------------- */
-let endTimer = null;
-const AUTO_RESTART_MS = 8000;
-function clearEndTimer() {
-  if (endTimer) { clearTimeout(endTimer); endTimer = null; }
-  if (S.mode === "voice") $("pausedBadge").style.display = "none";
-}
-function armEndTimer() {
-  if (endTimer) clearTimeout(endTimer);
-  $("pausedBadge").textContent = "Кінець уроку — авто-перезапуск за 8 с";
-  $("pausedBadge").style.display = "block";
-  endTimer = setTimeout(() => { endTimer = null; restartToStart(); }, AUTO_RESTART_MS);
-}
 function restartToStart() {
-  clearEndTimer();
   S.words.forEach(w => w.el.className = "w");
   S.pos = 0; S.curSent = -1; S.targetTop = Infinity;
   utterSeen = 0; stall = 0; recent = [];
@@ -546,7 +527,6 @@ function enterPrompter() {
 
 function exitPrompter() {
   S.running = false;
-  clearEndTimer();
   cancelAnimationFrame(S.raf);
   stopMic();
   releaseWakeLock();
@@ -560,6 +540,52 @@ $("fPlus").onclick = () => { S.fontSize = Math.min(S.fontSize + 4, 90); applyTyp
 $("fMinus").onclick = () => { S.fontSize = Math.max(S.fontSize - 4, 20); applyTypography(); saveCfg(); setPos(S.pos); $("fontSize").value = S.fontSize; syncOuts(); };
 $("speed").oninput = e => { S.autoSpeed = +e.target.value; saveCfg(); };
 
+/* ---------------- manual swipe ----------------
+   The reader (or a helper) can drag the text with a finger.
+   On release the follower re-anchors to what is on screen now:
+   it assumes it lost the reader and searches around that zone. */
+let dragY = null, dragMoved = 0, dragJustEnded = false;
+function reAnchorToScreen() {
+  if (!S.words.length) return;
+  const targetY = window.innerHeight * 0.44 - S.curTop;
+  let best = 0, bestD = Infinity;
+  for (let i = 0; i < S.words.length; i++) {
+    const d = Math.abs(S.words[i].el.offsetTop - targetY);
+    if (d < bestD) { bestD = d; best = i; }
+  }
+  S.words.forEach((w, i) => w.el.classList.toggle("done", i < best));
+  if (S.sentEls[S.curSent]) S.sentEls[S.curSent].forEach(el => el.classList.remove("cursent"));
+  S.curSent = -1;
+  S.pos = best;
+  stall = 0; recent = [];
+  S.targetTop = S.curTop;   // stay where the human left the text
+  setPos(best);
+}
+const sc = $("scroller");
+sc.addEventListener("pointerdown", e => { dragY = e.clientY; dragMoved = 0; });
+sc.addEventListener("pointermove", e => {
+  if (dragY === null) return;
+  const dy = e.clientY - dragY; dragY = e.clientY;
+  if (dy) {
+    dragMoved += Math.abs(dy);
+    S.curTop += dy;
+    S.targetTop = S.curTop;                 // follower does not fight the finger
+    $("content").style.top = S.curTop + "px";
+  }
+});
+function endDrag() {
+  if (dragY === null) return;
+  dragY = null;
+  if (dragMoved > 12) {
+    dragJustEnded = true;
+    setTimeout(() => { dragJustEnded = false; }, 400); // in case no click follows
+    reAnchorToScreen();
+  }
+}
+sc.addEventListener("pointerup", endDrag);
+sc.addEventListener("pointercancel", endDrag);
+sc.addEventListener("pointerleave", endDrag);
+
 /* tap: auto mode → pause/resume; voice mode → show/hide bar */
 let barTimer;
 function scheduleBarHide() {
@@ -567,6 +593,7 @@ function scheduleBarHide() {
   barTimer = setTimeout(() => $("topbar").classList.add("hidden"), 4000);
 }
 $("scroller").addEventListener("click", () => {
+  if (dragJustEnded) { dragJustEnded = false; return; }  // a swipe is not a tap
   if (S.mode === "auto") {
     S.paused = !S.paused;
     $("pausedBadge").style.display = S.paused ? "block" : "none";
